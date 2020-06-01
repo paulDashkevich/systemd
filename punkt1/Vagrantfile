@@ -1,0 +1,79 @@
+# -*- mode: ruby -*-
+# vim: set ft=ruby :
+
+MACHINES = {
+  :systemd => {
+        :box_name => "centos/7",
+	:box_version => "1804.02",
+        :ip_addr => '192.168.11.101'
+        },
+   }
+   
+Vagrant.configure("2") do |config|
+
+  MACHINES.each do |boxname, boxconfig|
+	config.vm.box_version = "1804.02"
+	config.vm.define boxname do |box|
+         box.vm.box = boxconfig[:box_name]
+         box.vm.host_name = boxname.to_s
+         box.vm.network "private_network", ip: boxconfig[:ip_addr]
+         box.vm.provider :virtualbox do |vb|
+           	  vb.customize ["modifyvm", :id, "--memory", "1024"]
+end
+	 box.vm.provision "shell", inline: <<-SHELL
+	      mkdir -p ~root/.ssh
+              cp ~vagrant/.ssh/auth* ~root/.ssh
+	
+	# создаём конфигурационный файл
+cat << EOF > /etc/sysconfig/logcheck
+WORD="ALERT"
+LOG=/var/log/logcheck.log
+EOF
+
+	# отправляем алерт
+echo "Log file, ALERT" > /var/log/logcheck.log
+	
+	# создаём скрипт     cat /opt/checklog.sh
+echo -e '#!/bin/bash
+WORD=$1
+LOG=$2
+DATE=$(date)
+if grep $WORD $LOG &> /dev/null
+then
+logger $DATE": I found the word:"$WORD"!"
+else
+exit 0
+fi' > /opt/checklog.sh
+
+	# делаем исполняемым скрипт /opt/checklog.sh
+chmod +x /opt/checklog.sh
+ 
+	# создаём сервис  cat  /etc/systemd/system/checklog.service
+echo -e '[Unit]
+Description=My log check service
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/sysconfig/logcheck
+ExecStart=/opt/checklog.sh $WORD $LOG' > /etc/systemd/system/checklog.service
+
+		systemctl start checklog.service
+	# создаём таймер   cat /etc/systemd/system/checklog.timer
+		echo -e '[Unit]
+		Description=Timer checklog every 30s
+		[Timer]
+		OnUnitActiveSec=30
+		Unit=checklog.service
+		[Install]
+		WantedBy=multi-user.target'  > /etc/systemd/system/checklog.timer
+
+	systemctl start checklog.timer
+	systemctl enable checklog.service
+	systemctl start checklog.service
+	systemctl list-timers --all
+	# смотрим лог
+	tail -15 /var/log/messages
+
+						SHELL
+	 end
+	end
+end

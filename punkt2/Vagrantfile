@@ -1,0 +1,63 @@
+# -*- mode: ruby -*-
+# vim: set ft=ruby :
+
+MACHINES = {
+  :systemd => {
+        :box_name => "centos/7",
+	:box_version => "1804.02",
+        :ip_addr => '192.168.11.101'
+        },
+   }
+   
+Vagrant.configure("2") do |config|
+
+  MACHINES.each do |boxname, boxconfig|
+	config.vm.box_version = "1804.02"
+	config.vm.define boxname do |box|
+         box.vm.box = boxconfig[:box_name]
+         box.vm.host_name = boxname.to_s
+         box.vm.network "private_network", ip: boxconfig[:ip_addr]
+         box.vm.provider :virtualbox do |vb|
+           	  vb.customize ["modifyvm", :id, "--memory", "1024"]
+end
+	 box.vm.provision "shell", inline: <<-SHELL
+	      mkdir -p ~root/.ssh
+              cp ~vagrant/.ssh/auth* ~root/.ssh
+	
+# Установка spawn-fcgi 
+yum install epel-release -y && yum install spawn-fcgi php php-cli mod_fcgid httpd -y
+
+# Скрипт /etc/rc.d/init.d/spawn-fcgi - Init-script
+# Раскоментируем нужные строки 
+sed -i.orig -e /#SOCKET=/s/#// -e /#OPTIONS=/s/#// /etc/sysconfig/spawn-fcgi
+
+# Создаём unit-file   cat /etc/systemd/system/spawn-fcgi.service
+echo -e '[Unit]
+Description=Spawn FastCGI service
+After=network-online.target remote-fs.target nss-lookup.target
+After=syslog.target
+Wants=network-online.target
+[Service]
+Type=simple
+SyslogIdentifier=%p
+PIDFile=/var/run/%p.pid
+EnvironmentFile=/etc/sysconfig/spawn-fcgi
+ExecStart=/usr/bin/spawn-fcgi -n $OPTIONS
+KillMode=process
+ExecStopPost=/bin/rm -f /var/run/%p.pid
+Restart=on-failure
+RestartSec=5
+[Install]
+WantedBy=multi-user.target' > /etc/systemd/system/spawn-fcgi.service 
+
+# Релоадим  демона systemd   
+systemctl daemon-reload
+
+# Cтартуем и чекаем наш сервис 
+systemctl start spawn-fcgi
+systemctl status spawn-fcgi
+#
+						SHELL
+	 end
+	end
+end
